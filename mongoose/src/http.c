@@ -411,6 +411,62 @@ struct mg_str *mg_get_http_header(struct http_message *hm, const char *name) {
   return NULL;
 }
 
+
+struct mg_http_connection *mg_http_connect(struct mg_mgr *mgr,
+                                           mg_event_handler_t ev_handler,
+                                           struct mg_connect_opts opts,
+                                           const char *url)
+{
+  const char *path;
+
+  struct mg_http_connection * conn = (struct mg_http_connection *)MG_MALLOC(sizeof(struct mg_http_connection));
+  if (!conn)
+    return NULL;
+
+  conn->addr = 0;
+  conn->connection = mg_connect_http_base(
+          mgr, ev_handler, opts, "http://", "https://", url, &path, &conn->addr);
+
+  if (conn->connection == NULL) {
+    MG_FREE(conn);
+    return NULL;
+  }
+
+  return conn;
+}
+
+
+struct mg_http_connection * mg_http_request(struct mg_http_connection * conn,
+                                            const char *uri,
+                                            const char *extra_headers,
+                                            const char *post_data)
+{
+  mg_printf(conn->connection, "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %" SIZE_T_FMT
+  "\r\n%s\r\n%s",
+          post_data == NULL ? "GET" : "POST", uri, conn->addr,
+          post_data == NULL ? 0 : strlen(post_data),
+          extra_headers == NULL ? "" : extra_headers,
+          post_data == NULL ? "" : post_data);
+
+//  printf("HTTP_REQUEST:\n");
+//  printf("%s %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %" SIZE_T_FMT
+//  "\r\n%s\r\n%s\n",
+//          post_data == NULL ? "GET" : "POST", uri, conn->addr,
+//          post_data == NULL ? 0 : strlen(post_data),
+//          extra_headers == NULL ? "" : extra_headers,
+//          post_data == NULL ? "" : post_data);
+
+  return conn;
+}
+
+
+void mg_http_close(struct mg_http_connection * conn)
+{
+  conn->connection->flags |= MG_F_CLOSE_IMMEDIATELY;
+  MG_FREE(conn->addr);
+  MG_FREE(conn);
+}
+
 #ifndef MG_DISABLE_HTTP_WEBSOCKET
 
 static int mg_is_ws_fragment(unsigned char flags) {

@@ -52,6 +52,13 @@ extern "C" {
 #define MG_ENV_EXPORT_TO_CGI "MONGOOSE_CGI"
 #endif
 
+/* HTTP connection */
+struct mg_http_connection
+{
+    struct mg_connection * connection;
+    char * addr;
+};
+
 /* HTTP message */
 struct http_message {
   struct mg_str message; /* Whole message: request line + headers + body */
