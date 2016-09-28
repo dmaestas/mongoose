@@ -2843,6 +2843,30 @@ void mg_printf_html_escape(struct mg_connection *nc, const char *fmt, ...);
 extern "C" {
 #endif /* __cplusplus */
 
+#ifdef BANDURA_MODS
+
+struct mg_http_connection
+{
+    struct mg_connection * connection;
+    char * addr;
+};
+
+struct mg_http_connection *mg_http_connect(struct mg_mgr *mgr,
+                                           mg_event_handler_t ev_handler,
+                                           struct mg_connect_opts opts,
+                                           const char *url);
+
+struct mg_http_connection * mg_http_request(struct mg_http_connection * conn,
+                                            const char *uri,
+                                            const char *extra_headers,
+                                            const char *post_data);
+
+void mg_http_close(struct mg_http_connection * conn);
+
+struct http_message * mg_http_clone_message(struct http_message * original);
+
+#endif
+
 /*
  * Helper function that creates an outbound HTTP connection.
  *
