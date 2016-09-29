@@ -2847,16 +2847,18 @@ extern "C" {
 
 struct mg_http_connection
 {
-    struct mg_connection * connection;
-    struct http_message * message;
     struct mg_mgr mgr;
     struct mg_connect_opts opts;
-    char   url[128];
+    struct http_message hm;
+    struct http_message * hm_ptr;
+    struct mg_connection * nc;
+    char * msg_buff;
     char * addr;
-    int data_ready;
-    int connect_ready;
-    int timeout_secs;
-    int timer_ticks;
+    int  data_ready;
+    int  connect_ready;
+    int  timeout_secs;
+    int  timer_ticks;
+    char url[128];
 };
 
 
@@ -2872,7 +2874,7 @@ const struct http_message * mg_http_request(struct mg_http_connection * conn,
 
 void mg_http_close(struct mg_http_connection * conn);
 
-struct http_message * mg_http_clone_message(struct http_message * original);
+
 
 #endif
 

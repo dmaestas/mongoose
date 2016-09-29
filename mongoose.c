@@ -7445,6 +7445,19 @@ struct mg_connection *mg_connect_http(struct mg_mgr *mgr,
 //    free(buff);
 //}
 
+static struct http_message * mg_http_clone_message(struct mg_http_connection * conn, struct http_message * original);
+
+inline
+static void mg_http_delete_cloned_message(struct mg_http_connection * conn)
+{
+    if (conn->msg_buff)
+    {
+      MG_FREE(conn->msg_buff);
+      conn->msg_buff = NULL;
+    }
+    conn->hm_ptr = NULL;
+}
+
 static void ev_bandura_http_request_handler(struct mg_connection *c, int ev, void *p)
 {
     struct mg_http_connection * conn = (struct mg_http_connection *)c->user_data;
@@ -7453,7 +7466,7 @@ static void ev_bandura_http_request_handler(struct mg_connection *c, int ev, voi
     {
         printf(" *** HTTP EVENT *** - MG_EV_HTTP_REPLY\n");
         struct http_message * hm = (struct http_message *)p;
-        conn->message = mg_http_clone_message(hm);
+        mg_http_clone_message(conn, hm);
         conn->data_ready = 1;
         assert((c->flags & MG_F_CLOSE_IMMEDIATELY) == 0);
     }
@@ -7467,7 +7480,7 @@ static void ev_bandura_http_request_handler(struct mg_connection *c, int ev, voi
 
         if (conn->timer_ticks > conn->timeout_secs)
         {
-            conn->connection->flags |= MG_F_CLOSE_IMMEDIATELY;
+            conn->nc->flags |= MG_F_CLOSE_IMMEDIATELY;
         }
     }
     else if (ev == MG_EV_CLOSE)
@@ -7508,21 +7521,17 @@ const struct http_message * mg_http_request(struct mg_http_connection * conn,
                                       const char *extra_headers,
                                       const char *post_data)
 {
-    if (conn->message)
-    {
-        MG_FREE(conn->message);
-        conn->message = 0;
-    }
-    if (conn->connection == NULL)
+    mg_http_delete_cloned_message(conn);
+    if (conn->nc == NULL)
     {
         const char *path;
-        conn->connection = mg_connect_http_base(&conn->mgr, ev_bandura_http_request_handler,
+        conn->nc = mg_connect_http_base(&conn->mgr, ev_bandura_http_request_handler,
                    conn->opts, "http://", "https://", conn->url, &path, &conn->addr);
-        if (conn->connection == NULL)
+        if (conn->nc == NULL)
             return NULL;
-        conn->connection->user_data = conn;
+        conn->nc->user_data = conn;
     }
-    mg_printf(conn->connection, "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %" SIZE_T_FMT
+    mg_printf(conn->nc, "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %" SIZE_T_FMT
                       "\r\n%s\r\n%s",
               post_data == NULL ? "GET" : "POST", uri, conn->addr,
               post_data == NULL ? 0 : strlen(post_data),
@@ -7542,39 +7551,43 @@ const struct http_message * mg_http_request(struct mg_http_connection * conn,
     while (!conn->data_ready)
         mg_mgr_poll(&conn->mgr, 1000);
 
-    if (conn->message == NULL)
+    if (conn->hm_ptr == NULL)
     {
         MG_FREE(conn->addr);
         conn->addr = NULL;
-        conn->connection = NULL;
+        conn->nc = NULL;
     }
-    return conn->message;
+    return conn->hm_ptr;
 }
 
 void mg_http_close(struct mg_http_connection * conn)
 {
-    if (conn->connection)
-        conn->connection->flags |= MG_F_CLOSE_IMMEDIATELY;
+    if (conn->nc)
+        conn->nc->flags |= MG_F_CLOSE_IMMEDIATELY;
     mg_mgr_poll(&conn->mgr, 1);
-    if (conn->message)
-        MG_FREE(conn->message);
+    mg_http_delete_cloned_message(conn);
     if (conn->addr)
         MG_FREE(conn->addr);
     MG_FREE(conn);
 }
 
 
-struct http_message * mg_http_clone_message(struct http_message * original)
+static struct http_message * mg_http_clone_message(struct mg_http_connection * conn, struct http_message * original)
 {
     int i;
 
-    struct http_message * copy = MG_MALLOC(sizeof(struct http_message));
+    struct http_message * copy = &conn->hm;
+    conn->msg_buff = MG_MALLOC(original->message.len);
+    if (!conn->msg_buff)
+        return NULL;
 
-    memset(copy,0,sizeof(*copy));
-    copy->message.p = MG_MALLOC(original->message.len);
+    memset(copy,0,sizeof(conn->hm));
+    memcpy(conn->msg_buff, original->message.p, original->message.len);
+
+    copy->message.p = conn->msg_buff;
     copy->message.len = original->message.len;
 
-    memcpy(copy->message.p, original->message.p, original->message.len);
+    memcpy((char *)copy->message.p, original->message.p, original->message.len);
 
     copy->body.p = copy->message.p + (original->body.p - original->message.p);
 
@@ -7605,6 +7618,7 @@ struct http_message * mg_http_clone_message(struct http_message * original)
         }
     }
 
+    conn->hm_ptr = copy;
     return copy;
 }
 
