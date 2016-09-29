@@ -7428,39 +7428,251 @@ struct mg_connection *mg_connect_http(struct mg_mgr *mgr,
 
 #ifdef BANDURA_MODS
 
+/*
+ * ****************************************************************
+ * *  BANDURA MODS
+ * ****************************************************************/
+
+//static void print_message(const char * hdr, struct http_message * hm)
+//{
+//    char * buff = malloc(hm->body.len + 1);
+//    memcpy(buff, hm->body.p, hm->body.len);
+//    buff[hm->body.len] = 0;
+//    printf("*************************************************\n");
+//    printf("*  HTTP(%p) %s\n", hm, hdr);
+//    printf("*************************************************\n");
+//    printf("%s\n", buff);
+//    free(buff);
+//}
+
+static void ev_bandura_http_request_handler(struct mg_connection *c, int ev, void *p)
+{
+    struct mg_http_connection * conn = (struct mg_http_connection *)c->user_data;
+
+    if (ev == MG_EV_HTTP_REPLY)
+    {
+        printf(" *** HTTP EVENT *** - MG_EV_HTTP_REPLY\n");
+        struct http_message * hm = (struct http_message *)p;
+        conn->message = mg_http_clone_message(hm);
+        conn->data_ready = 1;
+        assert((c->flags & MG_F_CLOSE_IMMEDIATELY) == 0);
+    }
+    else if (ev == MG_EV_CONNECT)
+    {
+        conn->connect_ready = 1;
+    }
+    else if (ev == MG_EV_POLL)
+    {
+        conn->timer_ticks++;
+
+        if (conn->timer_ticks > conn->timeout_secs)
+        {
+            conn->connection->flags |= MG_F_CLOSE_IMMEDIATELY;
+        }
+    }
+    else if (ev == MG_EV_CLOSE)
+    {
+        conn->data_ready = 1;
+        printf("*** HTTP EVENT *** - CLOSE\n");
+    }
+    else
+    {
+        printf("*** HTTP EVENT *** - %d\n", ev);
+        fflush(stdout);
+    }
+}
+
+struct mg_http_connection * mg_http_connect(const char *url,
+                                            struct mg_connect_opts * opts,
+                                            int timeout_secs)
+{
+    struct mg_http_connection * conn = MG_MALLOC(sizeof(struct mg_http_connection));
+    if (!conn)
+        return NULL;
+    memset(conn,0,sizeof(struct mg_http_connection));
+
+    if (!opts)
+        memcpy(&conn->opts, opts, sizeof(conn->opts));
+
+    strncpy(conn->url, url, sizeof(conn->url));
+    conn->url[127] = 0;
+    conn->timeout_secs = timeout_secs;
+    mg_mgr_init(&conn->mgr, 0);
+
+    return conn;
+}
+
+
+const struct http_message * mg_http_request(struct mg_http_connection * conn,
+                                      const char *uri,
+                                      const char *extra_headers,
+                                      const char *post_data)
+{
+    if (conn->message)
+    {
+        MG_FREE(conn->message);
+        conn->message = 0;
+    }
+    if (conn->connection == NULL)
+    {
+        const char *path;
+        conn->connection = mg_connect_http_base(&conn->mgr, ev_bandura_http_request_handler,
+                   conn->opts, "http://", "https://", conn->url, &path, &conn->addr);
+        if (conn->connection == NULL)
+            return NULL;
+        conn->connection->user_data = conn;
+    }
+    mg_printf(conn->connection, "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %" SIZE_T_FMT
+                      "\r\n%s\r\n%s",
+              post_data == NULL ? "GET" : "POST", uri, conn->addr,
+              post_data == NULL ? 0 : strlen(post_data),
+              extra_headers == NULL ? "" : extra_headers,
+              post_data == NULL ? "" : post_data);
+
+//    printf("HTTP_REQUEST:\n");
+//    printf("%s %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %" SIZE_T_FMT
+//                   "\r\n%s\r\n%s\n",
+//           post_data == NULL ? "GET" : "POST", uri, conn->addr,
+//           post_data == NULL ? 0 : strlen(post_data),
+//           extra_headers == NULL ? "" : extra_headers,
+//           post_data == NULL ? "" : post_data);
+
+    conn->timer_ticks = 0;
+    conn->data_ready = 0;
+    while (!conn->data_ready)
+        mg_mgr_poll(&conn->mgr, 1000);
+
+    if (conn->message == NULL)
+    {
+        MG_FREE(conn->addr);
+        conn->addr = NULL;
+        conn->connection = NULL;
+    }
+    return conn->message;
+}
+
+void mg_http_close(struct mg_http_connection * conn)
+{
+    if (conn->connection)
+        conn->connection->flags |= MG_F_CLOSE_IMMEDIATELY;
+    mg_mgr_poll(&conn->mgr, 1);
+    if (conn->message)
+        MG_FREE(conn->message);
+    if (conn->addr)
+        MG_FREE(conn->addr);
+    MG_FREE(conn);
+}
+
+
+struct http_message * mg_http_clone_message(struct http_message * original)
+{
+    int i;
+
+    struct http_message * copy = MG_MALLOC(sizeof(struct http_message));
+
+    memset(copy,0,sizeof(*copy));
+    copy->message.p = MG_MALLOC(original->message.len);
+    copy->message.len = original->message.len;
+
+    memcpy(copy->message.p, original->message.p, original->message.len);
+
+    copy->body.p = copy->message.p + (original->body.p - original->message.p);
+
+    copy->proto.p = copy->message.p + (original->proto.p - original->message.p);
+    copy->method.p = copy->message.p + (original->method.p - original->message.p);
+    copy->query_string.p = copy->message.p + (original->query_string.p - original->message.p);
+    copy->resp_status_msg.p = copy->message.p + (original->resp_status_msg.p - original->message.p);
+    copy->uri.p = copy->message.p + (original->uri.p - original->message.p);
+
+    copy->body.len = original->body.len;
+    copy->proto.len = original->proto.len;
+    copy->method.len = original->method.len;
+    copy->query_string.len = original->query_string.len;
+    copy->resp_status_msg.len = original->resp_status_msg.len;
+    copy->uri.len = original->uri.len;
+
+    copy->resp_code = original->resp_code;
+
+    for (i=0; i<MG_MAX_HTTP_HEADERS; i++)
+    {
+        if (original->header_names[i].p && original->header_values[i].p)
+        {
+            copy->header_names[i].p = copy->message.p + (original->header_names[i].p - original->message.p);
+            copy->header_values[i].p = copy->message.p + (original->header_values[i].p - original->message.p);
+
+            copy->header_names[i].len = original->header_names[i].len;
+            copy->header_values[i].len = original->header_values[i].len;
+        }
+    }
+
+    return copy;
+}
+
+
+#endif
+
+#ifdef BANDURA_AIO_MODS
+
 /*************************************************************
  *  BANDURA MODS
  *************************************************************/
 
-struct mg_http_connection *mg_http_connect(struct mg_mgr *mgr,
-                                           mg_event_handler_t ev_handler,
+static void ev_bandura_http_aio_request_handler(struct mg_connection *c, int ev, void *p)
+{
+    struct mg_http_aio_connection * conn = (struct mg_http_aio_connection *)c->user_data;
+
+    if (ev == MG_EV_HTTP_REPLY)
+    {
+        printf(" *** HTTP EVENT *** - MG_EV_HTTP_REPLY\n");
+        struct http_message * hm = (struct http_message *)p;
+        if (conn->future_func)
+            conn->future_func(hm, ev, conn->future_data);
+        assert((c->flags & MG_F_CLOSE_IMMEDIATELY) == 0);
+    }
+    else
+    {
+        printf("*** HTTP EVENT *** - %d\n", ev);
+    }
+}
+
+
+struct mg_http_aio_connection *mg_http_aio_connect(struct mg_mgr *mgr,
                                            struct mg_connect_opts opts,
                                            const char *url)
 {
-    const char *path;
+    const char *path = 0;
 
-    struct mg_http_connection * conn = (struct mg_http_connection *)MG_MALLOC(sizeof(struct mg_http_connection));
+    struct mg_http_aio_connection * conn = (struct mg_http_aio_connection *)MG_MALLOC(sizeof(struct mg_http_aio_connection));
     if (!conn)
         return NULL;
 
     conn->addr = 0;
     conn->connection = mg_connect_http_base(
-            mgr, ev_handler, opts, "http://", "https://", url, &path, &conn->addr);
+            mgr, ev_bandura_http_aio_request_handler, opts, "http://", "https://", url, &path, &conn->addr);
 
     if (conn->connection == NULL) {
         MG_FREE(conn);
         return NULL;
     }
 
+    conn->future_func = 0;
+    conn->future_data = 0;
+
+    conn->connection->user_data = conn;
     return conn;
 }
 
 
-struct mg_http_connection * mg_http_request(struct mg_http_connection * conn,
+struct mg_http_aio_connection * mg_http_aio_request(struct mg_http_aio_connection * conn,
+                                            mg_http_aio_future_t future_func,
+                                            void * future_data,
                                             const char *uri,
                                             const char *extra_headers,
                                             const char *post_data)
 {
+    conn->future_func = future_func;
+    conn->future_data = future_data;
+
     mg_printf(conn->connection, "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %" SIZE_T_FMT
                       "\r\n%s\r\n%s",
               post_data == NULL ? "GET" : "POST", uri, conn->addr,
@@ -7480,34 +7692,11 @@ struct mg_http_connection * mg_http_request(struct mg_http_connection * conn,
 }
 
 
-void mg_http_close(struct mg_http_connection * conn)
+void mg_http_aio_close(struct mg_http_aio_connection * conn)
 {
     conn->connection->flags |= MG_F_CLOSE_IMMEDIATELY;
     MG_FREE(conn->addr);
     MG_FREE(conn);
-}
-
-struct http_message * mg_http_clone_message(struct http_message * original)
-{
-    int i;
-
-    struct http_message * copy = MG_MALLOC(original->message.len);
-
-    copy->body.p = copy->message.p + (original->body.p - original->message.p);
-    copy->proto.p = copy->message.p + (original->proto.p - original->message.p);
-    copy->method.p = copy->message.p + (original->method.p - original->message.p);
-    copy->query_string.p = copy->message.p + (original->query_string.p - original->message.p);
-    copy->resp_status_msg.p = copy->message.p + (original->resp_status_msg.p - original->message.p);
-    copy->uri.p = copy->message.p + (original->uri.p - original->message.p);
-    copy->resp_code = original->resp_code;
-
-    for (i=0; i<MG_MAX_HTTP_HEADERS; i++)
-    {
-        copy->header_names[i].p = copy->message.p + (original->header_names[i].p - original->message.p);
-        copy->header_values[i].p = copy->message.p + (original->header_values[i].p - original->message.p);
-    }
-
-    return copy;
 }
 
 #endif

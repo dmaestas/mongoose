@@ -2848,15 +2848,24 @@ extern "C" {
 struct mg_http_connection
 {
     struct mg_connection * connection;
+    struct http_message * message;
+    struct mg_mgr mgr;
+    struct mg_connect_opts opts;
+    char   url[128];
     char * addr;
+    int data_ready;
+    int connect_ready;
+    int timeout_secs;
+    int timer_ticks;
 };
 
-struct mg_http_connection *mg_http_connect(struct mg_mgr *mgr,
-                                           mg_event_handler_t ev_handler,
-                                           struct mg_connect_opts opts,
-                                           const char *url);
 
-struct mg_http_connection * mg_http_request(struct mg_http_connection * conn,
+struct mg_http_connection *mg_http_connect(const char *url,
+                                           struct mg_connect_opts * opts,
+                                           int timeout_secs);
+
+
+const struct http_message * mg_http_request(struct mg_http_connection * conn,
                                             const char *uri,
                                             const char *extra_headers,
                                             const char *post_data);
@@ -2864,6 +2873,37 @@ struct mg_http_connection * mg_http_request(struct mg_http_connection * conn,
 void mg_http_close(struct mg_http_connection * conn);
 
 struct http_message * mg_http_clone_message(struct http_message * original);
+
+#endif
+
+#ifdef BANDURA_AIO_MODS
+
+/*
+ * Callback function (future) for http responses. Must be defined by the user.
+ * Mongoose calls the event handler, passing the events defined below.
+ */
+typedef void (*mg_http_aio_future_t)(struct http_message * hm, int ev, void * user_data);
+
+struct mg_http_aio_connection
+{
+    struct mg_connection * connection;
+    char * addr;
+    mg_http_aio_future_t future_func;
+    void * future_data;
+};
+
+struct mg_http_aio_connection *mg_http_aio_connect(struct mg_mgr *mgr,
+                                           struct mg_connect_opts opts,
+                                           const char *url);
+
+struct mg_http_aio_connection * mg_http_aio_request(struct mg_http_aio_connection * conn,
+                                            mg_http_aio_future_t future_func,
+                                            void * future_data,
+                                            const char *uri,
+                                            const char *extra_headers,
+                                            const char *post_data);
+
+void mg_http_aio_close(struct mg_http_aio_connection * conn);
 
 #endif
 

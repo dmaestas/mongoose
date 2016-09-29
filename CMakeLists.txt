@@ -18,6 +18,14 @@ set(mcp_BINARY_DIR "${mongoose_SOURCE_DIR}/build")
 #        COMMAND ${mongoose_SOURCE_DIR}/tools/amalgam  --prefix=MG $\(cat "${mongoose_SOURCE_DIR}/mongoose.h.manifest" \) > "${mongoose_SOURCE_DIR}/mongoose.h"
 #)
 
+add_executable(test_http tests/test_http.c mongoose.c)
+target_link_libraries(test_http ssl crypto)
+
+#add_executable(test_http_aio tests/test_http_aio.c mongoose.c)
+#target_link_libraries(test_http_aio ssl crypto)
+
+add_executable(test_ssl tests/test_ssl.c mongoose.c)
+target_link_libraries(test_ssl ssl crypto)
 
 add_library(mongoose STATIC mongoose.c)
 
